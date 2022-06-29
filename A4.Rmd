@@ -1,0 +1,286 @@
+---
+title: "Assignment 4"
+author: "PLSC 21510/31510"
+date: '2022'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+Assigned: May 5, 2022
+Due: May 18, 2022
+
+# Part 1. Hilary's Emails
+
+In this section we will begin analyzing a collection of emails Hillary Clinton released as part of her (potentially improper) use of a private email server. 
+
+The dataset that we use comes from Kaggle where a team processed an initial release of 7,946 emails to create an easy to read csv file. The complete download is available here:
+https://www.kaggle.com/kaggle/hillary-clinton-emails.
+
+We’re going to work with the `Emails.csv` file, which is available in the directory on coursework for this assignment. Run the following code to preprocess the data:
+
+```{r}
+library(tidyverse)
+library(glmnet)
+library(quanteda)
+library(quanteda.textstats)
+library(tidytext)
+library(scales)
+
+# read csv
+clinton <- read.csv("emails.csv") 
+
+# tokenize
+clinton.toks <- clinton %>% 
+  corpus(text_field = "RawText", docid_field = "Id") %>%
+  tokens(split_hyphens = TRUE,
+         remove_punct = TRUE,
+         remove_numbers = TRUE,
+         remove_symbols = TRUE,
+         remove_url = TRUE) %>%
+  tokens_tolower()  
+
+# make dtm
+clinton.dtm <- clinton.toks %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  dfm()
+```
+
+## 1. Benghazi
+
+You might recall that there was considerable controversy over Hillary Clinton’s role in an incident in Benghazi where a US ambassador and other foreign service officers were killed. We're going to count the number of times Benghazi is used and how it is used in her emails.
+
+### 1.1 
+
+Count the number of times "Benghazi" is used in each email. Print the ID of the email(s) with the highest frequency.
+
+```{r}
+
+num_ben <- str_count(clinton$RawText, "\\bBenghazi\\b")
+
+df <- data.frame("num_ben" = num_ben, 
+                        
+                              "Id" = clinton$Id
+                             ) %>% 
+  arrange(-num_ben)
+
+head(df)
+
+```
+
+### 1.2 
+
+Using KWIC, find the 5 words before and after "benghazi" in the emails. Based on your impressions (and not a quantitative analysis, unless you want), when do mentions of Benghazi tend to occur in her email?
+A: it is usually updates on the department house committee on Benhgazi, or about the military situation in Libya  
+
+```{r}
+beng_five <- kwic(clinton.toks, pattern = "benghazi", valuetype = "fixed", window = 5)
+head(beng_five, 10)
+```
+
+## 2. Sentiment
+
+### 2.1
+
+Using the `bing` dictionary from the `tidytext::get_sentiments` function, calculate the positive sentiment (as a proportion of all pos+neg words) for each email. Print the sentiments of the first 5 emails.
+
+```{r}
+sent <- get_sentiments("bing")
+sent_dict <- as.dictionary(sent)
+dfm_sent <- dfm_lookup(clinton.dtm, dictionary = sent_dict)
+
+dfm_sent_prop <- dfm_weight(dfm_sent, scheme = "prop") 
+sentiment <- convert(dfm_sent_prop, "data.frame") %>%
+  mutate(Sentiment = rescale(positive, to = c(-1,1)))
+head(sentiment, 5)
+
+```
+
+### 2.2
+
+Regress the positive sentiment score against the number of times Benghazi is mentioned in an email. What do you notice about the relationship?
+A: looking at the R-squared it appers athat thre is no correlation between the positive sentiments and the number of times Benghazi is mentioned in an email(r-sqaured is in negative)
+```{r}
+df_ben <- data.frame("num_ben" = num_ben)
+regress_df <- bind_cols(df_ben, sentiment)
+regress_lm <- lm(positive~num_ben, data = regress_df) 
+summary(regress_lm)
+
+```
+
+### 2.3
+
+Another sentiment dictionary is the 2015 Lexicoder Sentiment Dictionary, which is available in the `data_dictionary_LSD2015` object from quanteda. The dictionary contains both negative/positive as well as "neg_positive" and "neg_negative" phrases 
+
+Read the documentation first! Then, use the dictionary to recalculate the sentiment of the emails. Both "negative" and "neg_positive" frequencies should be counted as "negative, and vice versa for "postive and "neg_negative". 
+
+After you recalculate the positive sentiment score, re-estimate its relationship to "Benghazi" frequency. Did your results change?
+A: the correlation changed a little bit to the better(R-squared increased) however, there is still no realtionship between teh two variables 
+
+```{r}
+
+clinton_comp_words <- clinton.toks %>% 
+tokens_ngrams(2)  %>% 
+   dfm()
+
+dfm_sent_LSD <- dfm_lookup(clinton_comp_words, dictionary = data_dictionary_LSD2015)
+  
+dfm_sent_prop_LSD <- dfm_weight(dfm_sent_LSD, scheme = "prop")
+
+
+sentiment_LSD <- convert(dfm_sent_prop_LSD, to =  "data.frame") 
+sentiment_LSD$sum_neg <- rowSums(sentiment_LSD[,c("negative", "neg_positive")])
+
+  sentiment_LSD$sum_pos <- rowSums(sentiment_LSD[, c("positive", "neg_negative")])
+
+ sentiment_LSD <- subset (sentiment_LSD, select = -c(negative,positive,neg_positive, neg_negative))
+head(sentiment_LSD)
+
+regress_sum <- bind_cols(df_ben, sentiment_LSD)
+regress_lm_sum <- lm(sum_pos~num_ben, data = regress_sum) 
+summary(regress_lm_sum)
+
+#doesn't change  a lot, relationship is unchanged 
+```
+
+
+# Part 2: Credit Claiming in Congressional Texts
+
+In *The Impression of Influence*, Grimmer, Westwood, and Messing analyze the rate members of Congress claim credit for government spending in their press releases. Members of Congress issue a lot of press releases: from 2005 to 2010, House members issues nearly *170,000* press releases.
+
+Given that it would be hard to analyze such a large collection by hand, GWM decided to use supervised learning methods. They hired a team of Stanford undergraduates to classify a random sample of 800 press releases as "credit claiming" or not. 
+
+The object `CreditClaim.RData` contains the list `credit_claim`. The first element of this list (named `x`) is the *document term matrix* (already preprocessed for you) and the second element (`y`) are the labels.
+
+Run the code below to get started.
+
+```{r}
+load("CreditClaim.RData")
+
+
+x_credit <- credit_claim$x
+
+y_credit <- credit_claim$y
+
+
+```
+
+## 3. Logistic vs. Lasso
+
+### 3.1
+
+Using a *logistic* regression, predict the credit claiming labels using all features. What warning message do you receive and what do you notice about the coefficients? (warning: this might take awhile) 
+A: Warning: glm.fit: algorithm did not converge
+It says that 6791 of the coefficients could not be defined because of singularities)
+
+
+```{r}
+log_reg <- glm(y_credit~x_credit, family = 'binomial')
+#I used summary(log_reg) and found out that most of the coefficients have no value (NA)
+```
+
+### 3.2
+
+Using the `glmnet` library, fit a LASSO regression (*logistic* model). Plot the number of non-zero coefficients at different values of λ. What do you notice?
+A: when the non-zero coefficients increases, lambda decreases and vice versa 
+
+```{r}
+
+lasso <- glmnet(x = x_credit, y = y_credit, family = 'binomial')
+
+sum_beta <- colSums(abs(lasso$beta !=0))
+
+plot(sum_beta~lasso$lambda)
+```
+
+## 4. In-sample accuracy.
+
+### 4.1 
+
+Write a function called `misclassification` that takes two arguments `predict` and `true` (both numeric vectors of 0's or 1's), and returns the misclassification error (i.e., 1 - accuracy)
+
+```{r}
+misclassification <- function(predict, true){ 
+  score <- (sum(predict & true) + sum(!predict & !true)) / length(true)
+  erorr <- 1-score
+  return(1-score)
+} 
+  
+  
+# uncomment to test -- should return 0.3333333
+misclassification(c(0, 0, 1), c(0, 1, 1))
+```
+
+### 4.2
+
+Plot the in-sample misclassification error at different values of λ. 
+
+**Hint**: Use the `type = "class"` argument in `predict` to get the predicted class label. Make sure to convert to numeric before passing into your `misclassification` function.
+
+```{r}
+pred_lasso <- predict(lasso, newx = x_credit, type = "class") 
+
+miss_error <- c()
+for(z in 1:ncol(pred_lasso)){
+  predictions <- pred_lasso[,z]
+  num_pred_lasso <- as.numeric(predictions)
+  miss_error[z] <- misclassification(num_pred_lasso, y_credit)
+}
+
+  
+plot(miss_error~lasso$lambda)
+``` 
+
+### 4.3
+
+What value of λ provides the lowest in-sample misclassification rate? Print the number of non-zero coefficients for that model.
+A: the lowest in-sample misclassification errr in this model is zero, the lamda that provides this error is 0.005484276
+
+```{r}
+
+min(miss_error)
+
+lasso$lambda[which.min(miss_error)] 
+
+
+beta_miss <- lasso$beta[, which.min(miss_error)]
+sum(beta_miss != 0)
+
+```
+
+## 5. Cross Validation
+
+### 5.1
+
+Perform a 10-fold cross validation for the LASSO model, calculating the misclassification error for each value of λ. 
+
+Plot the out-of-sample error for each value of λ.
+
+**Hint**: The parameter `type.measure = "class` in `cv.glmnet()` will calculate the misclassification error for you.
+
+[NB: This might take awhile in computing time.]
+
+```{r}
+set.seed(411)
+lasso_cv2 <- cv.glmnet( x_credit, y_credit, family = "binomial", type.measure = "class", nfolds = 10)
+plot(lasso_cv2)
+#the average
+
+```
+
+### 5.2
+
+What value of λ provides the lowest out-of-sample error? How does the out-of-sample error compare to the optimal in-sample error from the previous question? How many non-zero predictors are in this model?
+
+A:the lowest out-of-sample misclassification error in this model is 0.1468005, the lambda that provides this error is 0.02793766. 
+The difference between the in-sample and out of sample error is is only 0.14, which is a slight difference. Also the difference between the value of lambda is very small, nonetheless, there is a huge difference between the non-zero coefficients.  Therefore, we can argue that the raining model is working well 
+
+```{r}
+min(lasso_cv2$cvm)
+
+lasso_cv2$lambda[which.min(lasso_cv2$cvm)]
+
+lasso_cv2$nzero[which.min(lasso_cv2$cvm)]
+
+
+```
